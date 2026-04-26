@@ -1,8 +1,9 @@
+import json
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class Signal(BaseModel):
@@ -20,6 +21,17 @@ class Signal(BaseModel):
     source_article_ids: list[UUID] = Field(default_factory=list)
     payload: dict = Field(default_factory=dict)
     published_at: datetime
+
+    @field_validator("risk_score", "payload", mode="before")
+    @classmethod
+    def _parse_json_string(cls, v: Any) -> Any:
+        """Tolerate publishers that double-encode JSONB as strings (e.g. ad-hoc psql republish)."""
+        if isinstance(v, str):
+            try:
+                return json.loads(v)
+            except json.JSONDecodeError:
+                return v
+        return v
 
 
 class TradingRules(BaseModel):
