@@ -25,7 +25,11 @@ class DB:
     async def connect(self) -> None:
         if not settings.aicore_db_url:
             raise RuntimeError("AICORE_DB_URL not set")
-        self._pool = await asyncpg.create_pool(settings.aicore_db_url, min_size=1, max_size=5)
+        self._pool = await asyncpg.create_pool(
+            settings.aicore_db_url,
+            min_size=1, max_size=5,
+            init=_init_connection,
+        )
 
     async def close(self) -> None:
         if self._pool:
@@ -52,8 +56,7 @@ class DB:
         )
         if not row:
             return None
-        cfg = row["config"] if isinstance(row["config"], dict) else json.loads(row["config"])
-        return {"id": row["id"], "version": row["version"], "config": cfg}
+        return {"id": row["id"], "version": row["version"], "config": row["config"]}
 
     async def get_strategy_trading_block(self, strategy_id: UUID) -> dict:
         """Return the strategy.frontmatter.trading block (or {} if absent)."""
@@ -63,8 +66,7 @@ class DB:
         )
         if not row:
             return {}
-        fm = row["frontmatter"] if isinstance(row["frontmatter"], dict) else json.loads(row["frontmatter"])
-        return fm.get("trading", {}) or {}
+        return (row["frontmatter"] or {}).get("trading", {}) or {}
 
     async def open_position_size_usd(self) -> float:
         row = await self.pool.fetchrow(
@@ -126,7 +128,7 @@ class DB:
             intent_row.get("stop_loss_price"),
             intent_row.get("time_stop_at"),
             intent_row.get("status", "pending"),
-            json.dumps(intent_row.get("metadata", {})),
+            intent_row.get("metadata", {}),
         )
         return row["id"]
 
@@ -164,7 +166,7 @@ class DB:
     async def reject_trade(self, trade_id: UUID, reason: str) -> None:
         await self.pool.execute(
             "UPDATE trades SET status = 'rejected', errors = errors || $2::jsonb WHERE id = $1",
-            trade_id, json.dumps([reason]),
+            trade_id, [reason],
         )
 
     async def write_signal_outcome(self, *, signal_id: UUID, horizon: str, outcome: str,
@@ -182,6 +184,16 @@ class DB:
             """,
             signal_id, horizon, outcome, price_at_signal, price_at_eval, pct, notes,
         )
+
+
+async def _init_connection(conn: asyncpg.Connection) -> None:
+    """Register JSONB codec so reads return dicts (matches news-consolidator pattern)."""
+    await conn.set_type_codec(
+        "jsonb", encoder=json.dumps, decoder=json.loads, schema="pg_catalog"
+    )
+    await conn.set_type_codec(
+        "json", encoder=json.dumps, decoder=json.loads, schema="pg_catalog"
+    )
 
 
 db = DB()
