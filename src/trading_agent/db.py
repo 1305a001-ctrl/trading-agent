@@ -59,14 +59,27 @@ class DB:
         return {"id": row["id"], "version": row["version"], "config": row["config"]}
 
     async def get_strategy_trading_block(self, strategy_id: UUID) -> dict:
-        """Return the strategy.frontmatter.trading block (or {} if absent)."""
+        """Return the strategy.frontmatter.trading block (or {} if absent).
+
+        Tolerates news-consolidator's historical double-encoding bug
+        (sync_strategies json.dumps'd the dict before passing to a codec-encoded
+        column, so the JSONB cell contains a JSON-encoded string, not an object).
+        """
         row = await self.pool.fetchrow(
             "SELECT frontmatter FROM strategies WHERE id = $1",
             strategy_id,
         )
         if not row:
             return {}
-        return (row["frontmatter"] or {}).get("trading", {}) or {}
+        fm = row["frontmatter"]
+        if isinstance(fm, str):
+            try:
+                fm = json.loads(fm)
+            except json.JSONDecodeError:
+                return {}
+        if not isinstance(fm, dict):
+            return {}
+        return fm.get("trading", {}) or {}
 
     async def open_position_size_usd(self) -> float:
         row = await self.pool.fetchrow(
