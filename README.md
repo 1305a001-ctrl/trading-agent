@@ -1,27 +1,65 @@
 # trading-agent
 
-Phase 5 consumer for `signals:trading` + `signals:critical` Redis channels published by [news-consolidator](https://github.com/1305a001-ctrl/news-consolidator).
+Phase 5. Long-running daemon that consumes `signals:trading` + `signals:critical` from Redis and opens / closes trades. Paper broker is the default; live brokers are pluggable.
 
-**Status:** v0.1 — paper broker only. Alpaca / Binance / IBKR are stubs.
+For system context, read [`infra-core/docs/ARCHITECTURE.md`](https://github.com/1305a001-ctrl/infra-core/blob/main/docs/ARCHITECTURE.md) first.
 
 ## What it does
 
-1. Subscribes to `signals:trading` + `signals:critical` on Redis.
-2. For each signal, looks up the matching `agent_configs` row (slug = asset symbol) from the control plane.
-3. If the signal passes filters (confidence, max open positions, max daily trades, exposure cap) → opens a paper trade.
-4. Polls open positions every 60s; closes on TP / SL / time-stop using live Binance/Finnhub prices.
-5. Writes `signal_outcomes` rows for every closed trade so consistency tracking works.
-6. Telegram alert on every fill (open + close).
+Two concurrent loops:
+
+| Loop | Trigger | Action |
+|---|---|---|
+| `signal_loop` | Redis pubsub message | look up agent_config (slug = asset), evaluate gates, open paper trade |
+| `position_loop` | every `POLL_INTERVAL_SECONDS` | walk every open trade, fetch current price, close on TP / SL / time-stop |
+
+Both write to the same `trades` table. Closed trades also get a `signal_outcomes` row so consistency tracking works downstream.
 
 ## SL/TP precedence
 
 ```
-agent_config (UI: /trading)  →  strategy.frontmatter.trading  →  hardcoded settings defaults
+agent_config (UI-editable)  →  strategy.frontmatter.trading  →  hardcoded defaults
 ```
 
-Edit per-asset SL/TP, take-profit, min confidence, max positions etc. via the control-plane `/trading` page — the agent picks up changes on the next signal.
+Edit per-asset SL/TP, take-profit, min confidence, max positions etc. via the control-plane `/trading` page — the agent picks up changes on the next signal (no restart needed).
 
-## Risk envelope (v0.1 hardcoded; configurable later)
+## Module map
+
+```
+src/trading_agent/
+├── main.py            # asyncio entry — runs signal_loop + position_loop concurrently
+├── settings.py        # pydantic-settings; all env vars + tunables
+├── db.py              # asyncpg pool + JSONB codec + every read/write the agent needs
+├── decision.py        # PURE — signal × agent_config × strategy.trading → TradeIntent
+│                      #         (covered by tests/test_decision.py)
+├── models.py          # Signal, TradingRules, TradeIntent, Fill — pydantic types
+├── prices.py          # Binance public (crypto) + Finnhub (US equities) price feeds
+├── positions.py       # the polling loop — TP / SL / time-stop check + close
+├── alerts.py          # Telegram open / close formatters
+└── brokers/
+    ├── base.py        # Broker protocol
+    ├── paper.py       # default — fills using live mid prices, no real orders
+    ├── __init__.py    # registry — get_broker(name)
+    └── (alpaca.py, binance.py, ibkr.py — TODO; see "Adding a broker" below)
+```
+
+## Adding a broker
+
+1. Create `src/trading_agent/brokers/<name>.py` implementing the `Broker` protocol from `base.py`:
+   ```python
+   class MyBroker:
+       name = "my_broker"
+       async def open(self, asset: str, direction: str, size_usd: float) -> Fill: ...
+       async def close(self, broker_order_id: str, asset: str) -> float: ...
+   ```
+2. Register it in `brokers/__init__.py`
+3. Add to the `broker` literal in `models.py::TradingRules` and the `CHECK (broker IN ...)` constraint in `migrations/003_trades.sql`
+4. Add env vars (API key, base URL) to `settings.py` and `/srv/secrets/trading-agent.env`
+5. Update the agent_config or strategy.trading block to set `broker: "<name>"`
+
+Paper mode is always the safety net — if a live broker call raises, the trade is `rejected` and never partially opens.
+
+## Risk envelope (defaults; override in env file)
 
 | Setting | Default | Env var |
 |---|---|---|
@@ -36,8 +74,23 @@ Edit per-asset SL/TP, take-profit, min confidence, max positions etc. via the co
 
 Setting `TRADING_AGENT_HALT=1` blocks new opens but lets existing positions exit normally.
 
+## Tests
+
+```bash
+pip install -e '.[dev]'
+pytest -q
+```
+
+`tests/test_decision.py` covers every decision branch (halt, no-config, low-confidence, max-positions, dup-direction, max-daily, exposure-cap, fallback chain).
+
 ## Wire-up
 
-1. Apply migration: `psql ... < migrations/003_trades.sql`
-2. Set env (Redis URL, Postgres URL, Finnhub key for stock prices, Telegram creds).
-3. `docker compose up -d` — agent runs forever, restarts on failure.
+1. Apply migration:
+   ```bash
+   cat migrations/003_trades.sql | ssh ai-primary 'sudo docker exec -i postgres psql -U benadmin -d aicore'
+   ```
+2. Create per-asset configs via control-plane `/trading/new`
+3. Set env at `/srv/secrets/trading-agent.env` (Postgres, Redis, Finnhub key for stock prices, Telegram creds, optional Sentry)
+4. `docker compose -f infra-core/compose/trading-agent/docker-compose.yml up -d`
+
+See [LOCAL-DEV.md](https://github.com/1305a001-ctrl/infra-core/blob/main/docs/LOCAL-DEV.md) for running locally + hand-publishing test signals.
