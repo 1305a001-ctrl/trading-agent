@@ -22,8 +22,14 @@ class Settings(BaseSettings):
     # Kill switch — set TRADING_AGENT_HALT=1 to stop opening new positions
     trading_agent_halt: bool = False
 
-    # Brokers — paper is the only one wired in v0.1
+    # Default broker if neither agent_config nor strategy specifies one
     default_broker: str = "paper"
+
+    # Alpaca (US equities — paper by default; flip ALPACA_BASE_URL to live)
+    alpaca_api_key: str = ""
+    alpaca_secret: str = ""
+    alpaca_base_url: str = "https://paper-api.alpaca.markets"
+    alpaca_fill_timeout_seconds: int = 30
 
     # Price feeds (used by paper broker)
     finnhub_key: str = ""

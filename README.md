@@ -39,8 +39,9 @@ src/trading_agent/
 └── brokers/
     ├── base.py        # Broker protocol
     ├── paper.py       # default — fills using live mid prices, no real orders
-    ├── __init__.py    # registry — get_broker(name)
-    └── (alpaca.py, binance.py, ibkr.py — TODO; see "Adding a broker" below)
+    ├── alpaca.py      # US equities — paper at paper-api.alpaca.markets, flip ALPACA_BASE_URL for live
+    ├── __init__.py    # registry — get_broker(name); Alpaca only registers when creds present
+    └── (binance.py, ibkr.py — TODO; see "Adding a broker" below)
 ```
 
 ## Adding a broker
@@ -58,6 +59,18 @@ src/trading_agent/
 5. Update the agent_config or strategy.trading block to set `broker: "<name>"`
 
 Paper mode is always the safety net — if a live broker call raises, the trade is `rejected` and never partially opens.
+
+### Enabling Alpaca
+
+1. Sign up at https://alpaca.markets, generate **Paper** API keys from the dashboard
+2. Set `ALPACA_API_KEY` + `ALPACA_SECRET` in `/srv/secrets/trading-agent.env`
+3. `ALPACA_BASE_URL` defaults to `https://paper-api.alpaca.markets` — flip to `https://api.alpaca.markets` for live (and use a live key)
+4. Set the broker per-asset:
+   - via control-plane `/trading/new` config: add `"broker": "alpaca"` to that asset's config (UI exposing this is a TODO)
+   - or via strategy frontmatter `trading.broker: alpaca`
+5. Restart the container — Alpaca auto-registers on startup when creds are present
+
+Alpaca paper accounts have $100k of fake cash; orders queue if placed outside RTH and time out at `ALPACA_FILL_TIMEOUT_SECONDS` (default 30s).
 
 ## Risk envelope (defaults; override in env file)
 
