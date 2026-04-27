@@ -19,6 +19,7 @@ from trading_agent import alerts
 from trading_agent.brokers import get_broker
 from trading_agent.db import db
 from trading_agent.decision import decide
+from trading_agent.halt import is_halted
 from trading_agent.models import Signal, TradeIntent
 from trading_agent.positions import position_loop
 from trading_agent.settings import settings
@@ -102,6 +103,8 @@ async def _open_position(intent: TradeIntent, signal: Signal) -> None:
 
 
 async def _handle_signal(signal: Signal) -> None:
+    halted = await is_halted()
+
     agent_config = await db.get_active_trading_config(signal.asset)
     strategy_trading = await db.get_strategy_trading_block(signal.strategy_id)
     open_total = await db.open_position_size_usd()
@@ -120,7 +123,7 @@ async def _handle_signal(signal: Signal) -> None:
         open_count_asset=open_count,
         trades_today_asset=trades_today,
         has_open_same_direction=has_dup,
-        halt=settings.trading_agent_halt,
+        halt=halted,
     )
     if intent is None:
         log.info("Skipped signal %s (%s %s conf=%.2f): %s",
