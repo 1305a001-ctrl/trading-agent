@@ -13,7 +13,10 @@ class Settings(BaseSettings):
     total_exposure_cap_usd: float = 1000.0
     default_stop_loss_pct: float = 0.02
     default_take_profit_pct: float = 0.04
-    default_time_stop_hours: int = 24
+    # Default time-stop dropped 24→4 on 2026-04-27 after first outcome-scorer run:
+    # BTC strategies showed +0.04% expectancy at 4h but -0.19% at 24h, meaning the
+    # signals' edge decays before the original 24h time-stop fired.
+    default_time_stop_hours: int = 4
     min_confidence: float = 0.65
 
     # Position polling cadence
