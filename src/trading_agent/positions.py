@@ -2,7 +2,6 @@
 import asyncio
 import logging
 from datetime import UTC, datetime
-from uuid import UUID
 
 from trading_agent import alerts
 from trading_agent.brokers import get_broker

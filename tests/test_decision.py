@@ -2,8 +2,6 @@
 from datetime import UTC, datetime
 from uuid import uuid4
 
-import pytest
-
 from trading_agent.decision import decide
 from trading_agent.models import Signal
 

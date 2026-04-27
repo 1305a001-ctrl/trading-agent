@@ -35,7 +35,10 @@ class Signal(BaseModel):
 
 
 class TradingRules(BaseModel):
-    """Resolved per-trade rules. Fallback chain: agent_config → strategy.trading → settings defaults."""
+    """Resolved per-trade rules.
+
+    Fallback chain: agent_config → strategy.trading → settings defaults.
+    """
     stop_loss_pct: float = Field(gt=0, lt=1)
     take_profit_pct: float = Field(gt=0, lt=1)
     time_stop_hours: int = Field(gt=0)
