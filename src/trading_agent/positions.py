@@ -27,14 +27,18 @@ async def _close(trade, *, exit_price: float, reason: str) -> None:
         closed_at=closed_at,
     )
 
-    # Outcome row for consistency_scores downstream calc
+    # Outcome row for consistency_scores downstream calc.
+    # We use horizon='trade_close' to distinguish actual paper-trade closes
+    # from outcome-scorer's horizon-based price-only evaluations (4h/1d/7d).
+    # Aggregation in consistency_scores treats them as separate buckets.
+    duration_h = (closed_at - trade["opened_at"]).total_seconds() / 3600
     await db.write_signal_outcome(
         signal_id=trade["signal_id"],
-        horizon=f"{(closed_at - trade['opened_at']).total_seconds() / 3600:.1f}h",
+        horizon="trade_close",
         outcome="win" if pnl_usd > 0 else ("loss" if pnl_usd < 0 else "flat"),
         price_at_signal=trade["entry_price"],
         price_at_eval=exit_price,
-        notes=f"closed by {reason} (paper)",
+        notes=f"closed by {reason} after {duration_h:.1f}h (paper, pnl=${pnl_usd:+.2f})",
     )
 
     await alerts.telegram(alerts.format_close(
