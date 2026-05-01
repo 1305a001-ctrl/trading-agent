@@ -182,6 +182,17 @@ class DB:
             trade_id, [reason],
         )
 
+    async def update_trade_peak(self, trade_id: UUID, new_peak: float) -> None:
+        """Update the peak_price stored in trades.metadata for trailing-stop tracking."""
+        await self.pool.execute(
+            """
+            UPDATE trades
+               SET metadata = metadata || jsonb_build_object('peak_price', $2::float)
+             WHERE id = $1
+            """,
+            trade_id, float(new_peak),
+        )
+
     async def write_signal_outcome(self, *, signal_id: UUID, horizon: str, outcome: str,
                                    price_at_signal: float | None, price_at_eval: float | None,
                                    notes: str | None) -> None:
