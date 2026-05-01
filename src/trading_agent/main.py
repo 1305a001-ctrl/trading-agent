@@ -45,6 +45,18 @@ async def _open_position(intent: TradeIntent, signal: Signal) -> None:
     rules = intent.rules
     time_stop = datetime.now(UTC) + timedelta(hours=rules.time_stop_hours)
 
+    metadata = {
+        "confidence": signal.confidence,
+        "composite_risk_score": signal.composite_risk_score,
+        "strategy_git_sha": signal.strategy_git_sha,
+    }
+    if rules.trailing_stop_pct is not None:
+        # Persist the trailing-stop config + initial peak (= entry price, set
+        # once we have a fill below — for now seed with None and update in
+        # fill_trade if we extend it; positions._check_one falls back to
+        # entry_price when peak_price is None).
+        metadata["trailing_stop_pct"] = rules.trailing_stop_pct
+
     trade_id = await db.insert_trade({
         "signal_id": intent.signal_id,
         "agent_config_id": intent.agent_config_id,
@@ -54,11 +66,7 @@ async def _open_position(intent: TradeIntent, signal: Signal) -> None:
         "broker": rules.broker,
         "size_usd": rules.size_usd,
         "time_stop_at": time_stop,
-        "metadata": {
-            "confidence": signal.confidence,
-            "composite_risk_score": signal.composite_risk_score,
-            "strategy_git_sha": signal.strategy_git_sha,
-        },
+        "metadata": metadata,
     })
 
     broker = get_broker(rules.broker)

@@ -53,11 +53,41 @@ async def _close(trade, *, exit_price: float, reason: str) -> None:
     log.info("Closed %s %s by %s pnl=$%.2f", trade["asset"], trade["direction"], reason, pnl_usd)
 
 
+def _trailing_stop_check(trade, current_price: float) -> tuple[float, bool]:
+    """Compute new peak + whether trailing-stop should fire.
+
+    Returns (new_peak, trailing_hit). Pure function, testable.
+    Only fires if peak has exceeded entry (i.e., position went profitable at some
+    point). When position is still underwater from entry, SL handles the downside
+    and trailing stop does not interfere.
+    """
+    metadata = trade.get("metadata") or {}
+    trailing_pct = metadata.get("trailing_stop_pct")
+    if trailing_pct is None:
+        return trade["entry_price"], False
+
+    peak = metadata.get("peak_price") or trade["entry_price"]
+    direction = trade["direction"]
+    entry = trade["entry_price"]
+
+    if direction == "long":
+        new_peak = max(peak, current_price)
+        threshold = new_peak * (1 - float(trailing_pct))
+        # Only fire if peak exceeded entry AND price retraced past threshold
+        trailing_hit = new_peak > entry and current_price <= threshold
+    else:  # short — peak is the LOWEST price
+        new_peak = min(peak, current_price)
+        threshold = new_peak * (1 + float(trailing_pct))
+        trailing_hit = new_peak < entry and current_price >= threshold
+
+    return new_peak, trailing_hit
+
+
 async def _check_one(trade) -> None:
     if trade["status"] != "open" or trade["entry_price"] is None:
         return
 
-    # Time stop?
+    # Time stop comes first — independent of price feed availability.
     if trade["time_stop_at"] and datetime.now(UTC) >= trade["time_stop_at"]:
         broker = get_broker(trade["broker"])
         try:
@@ -68,11 +98,30 @@ async def _check_one(trade) -> None:
         await _close(trade, exit_price=exit_price, reason="time_stop")
         return
 
-    # Need a current price for TP/SL check
+    # Need a current price for trailing-stop + TP/SL checks.
     price = await get_price(trade["asset"])
     if price is None:
         return  # no feed for this asset, skip silently
 
+    # Trailing stop check (only active if metadata.trailing_stop_pct set)
+    new_peak, trailing_hit = _trailing_stop_check(trade, price)
+    metadata = trade.get("metadata") or {}
+    if metadata.get("trailing_stop_pct") is not None:
+        # Persist peak update if it changed (no-op if same)
+        existing_peak = metadata.get("peak_price") or trade["entry_price"]
+        if new_peak != existing_peak:
+            await db.update_trade_peak(trade["id"], new_peak)
+        if trailing_hit:
+            broker = get_broker(trade["broker"])
+            try:
+                exit_price = await broker.close(trade["broker_order_id"], trade["asset"])
+            except Exception as exc:
+                log.error("close failed (trailing_stop) for %s: %s", trade["id"], exc)
+                return
+            await _close(trade, exit_price=exit_price, reason="trailing_stop")
+            return
+
+    # Standard TP/SL check
     direction = trade["direction"]
     tp = trade["take_profit_price"]
     sl = trade["stop_loss_price"]

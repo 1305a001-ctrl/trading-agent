@@ -20,6 +20,12 @@ class TradingRules(BaseModel):
     size_usd: float = Field(gt=0)
     broker: Literal["paper", "alpaca", "binance", "ibkr"] = "paper"
 
+    # Optional trailing stop. When set, the position closes if price retraces
+    # `trailing_stop_pct` from peak (long) / trough (short) AFTER the position
+    # has been profitable. None = no trailing stop. Useful for crypto where
+    # time-stop forces premature exit on positions that would have run further.
+    trailing_stop_pct: float | None = Field(default=None, gt=0, lt=1)
+
 
 class TradeIntent(BaseModel):
     """Decision output: what to place. Pre-fill, pre-broker."""

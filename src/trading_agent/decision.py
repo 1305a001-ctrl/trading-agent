@@ -24,12 +24,16 @@ def _resolve_rules(agent_config_data: dict, strategy_trading: dict) -> TradingRu
             return strategy_trading[key]
         return default
 
+    trailing_raw = pick("trailing_stop_pct", None)
+    trailing_stop_pct = float(trailing_raw) if trailing_raw is not None else None
+
     return TradingRules(
         stop_loss_pct=float(pick("stop_loss_pct", settings.default_stop_loss_pct)),
         take_profit_pct=float(pick("take_profit_pct", settings.default_take_profit_pct)),
         time_stop_hours=int(pick("time_stop_hours", settings.default_time_stop_hours)),
         size_usd=float(settings.size_per_signal_usd),  # MVP: fixed $50/signal
         broker=pick("broker", settings.default_broker),
+        trailing_stop_pct=trailing_stop_pct,
     )
 
 
